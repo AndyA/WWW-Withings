@@ -8,11 +8,9 @@ my $build = Module::Build->new(
   dist_author       => 'Andy Armstrong <andy@hexten.net>',
   dist_version_from => 'lib/WWW/Withings.pm',
   requires          => {
-    'Config::Tiny'   => 0,
-    'Getopt::Long'   => 0,
+    'Digest::MD5'    => 0,
     'JSON'           => '2.00',
     'LWP::UserAgent' => '5.815',
-    'MIME::Base64'   => 0,
     'Test::More'     => 0,
     'accessors::ro'  => 0,
   },
