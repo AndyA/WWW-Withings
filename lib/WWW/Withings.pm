@@ -4,8 +4,9 @@ use warnings;
 use strict;
 
 use Carp;
-use JSON;
 use Data::Dumper;
+use Digest::MD5 qw( md5_hex );
+use JSON;
 use LWP::UserAgent;
 
 =head1 NAME
@@ -37,24 +38,35 @@ use accessors::ro qw( userid publickey last );
 BEGIN {
   my %meth = (
     probe => {
-      required => [qw( userid publickey )],
-      optional => [],
-      service  => 'once',
-      action   => 'probe',
+      fields  => [qw( userid publickey )],
+      service => 'once',
+      action  => 'probe',
     },
-    measure => {
-      required => [qw( userid publickey )],
+    get_measure => {
+      fields   => [qw( userid publickey )],
       optional => [
         qw( startdate enddate meastype lastupdate category limit offset )
       ],
       service => 'measure',
       action  => 'getmeas',
+      post    => sub { $_[0]->{body} }
+    },
+    get_user => {
+      fields  => [qw( userid publickey )],
+      service => 'user',
+      action  => 'getbyuserid',
+      post    => sub { @{ $_[0]->{body}{users} } }
+    },
+    get_otp => {
+      fields  => [qw( userid publickey )],
+      service => 'once',
+      action  => 'get',
+      post    => sub { $_[0]->{body}{once} }
     },
   );
-  my @APIARGS = qw( service action required optional );
   for my $m ( keys %meth ) {
     no strict 'refs';
-    *{$m} = sub { shift->_api( @{ $meth{$m} }{@APIARGS}, @_ ) };
+    *{$m} = sub { shift->_api( $meth{$m}, @_ ) };
   }
 }
 
@@ -63,9 +75,11 @@ sub _need {
   croak "Expected a number of key => value pairs"
    if @args % 2;
   my %args = @args;
-  my @missing = grep { !defined $args{$_} } @$need;
-  croak "Missing options: ", join( ', ', sort @missing )
-   if @missing;
+  if ( defined $need ) {
+    my @missing = grep { !defined $args{$_} } @$need;
+    croak "Missing options: ", join( ', ', sort @missing )
+     if @missing;
+  }
   if ( defined $optional ) {
     my %ok = map { $_ => 1 } @$need, @$optional;
     my @extra = grep { !$ok{$_} } keys %args;
@@ -81,8 +95,8 @@ by the module accepts a number of key => value pairs. The C<userid>
 and C<publickey> options are mandatory:
 
   my $withings = WWW::Withings->new(
-    userid    => 'alice',
-    publickey => 'x3122b4c4d3bad5e8d7397f0501b617ce60afe5d'
+    userid    => '194681',
+    publickey => '544c37c05e445b3b'
   );
 
 =cut
@@ -90,6 +104,26 @@ and C<publickey> options are mandatory:
 sub new {
   my $class = shift;
   return bless { _need( [ 'publickey', 'userid' ], [], @_ ) }, $class;
+}
+
+sub _get_user {
+  my ( $self, $email, $password ) = @_;
+  my $rs = $self->api(
+    'account', 'getuserslist',
+    email => $email,
+    hash  => $self->hash( $email, $password )
+  );
+  return $rs;
+}
+
+sub for_user {
+  my ( $self, $email, $password ) = @_;
+  my $user  = $self->_get_user( $email, $password );
+  my $class = ref $self;
+  my @u     = map {
+    $class->new( publickey => $_->{publickey}, userid => $_->{id} )
+  } @{ $user->{body}{users} || [] };
+  return wantarray ? @u : $u[0];
 }
 
 =head2 API Calls
@@ -124,81 +158,62 @@ error (which throws an exception).
 =cut
 
 sub _api {
-  my ( $self, $service, $action, $need, $optional, @args ) = @_;
+  my ( $self, $spec, @args ) = @_;
   my %args = (
-    _need(
-      $need, $optional,
-      userid    => $self->userid,
-      publickey => $self->publickey,
-      @args
-    ),
-    action => $action
+    _need( $spec->{required}, $spec->{optional}, @args ),
+    ( map { $_ => $self->$_() } @{ $spec->{fields} || [] } ),
+    action => $spec->{action}
   );
-  my $resp
-   = $self->_ua->post( join( '/', API, $service ), Content => \%args );
+  $spec->{pre}( \%args ) if $spec->{pre};
+  my $resp = $self->_ua->post( join( '/', API, $spec->{service} ),
+    Content => \%args );
   my $rd = $self->{last} = eval { JSON->new->decode( $resp->content ) };
   my $err = $@;
-  if ( $resp->is_error ) {
-    croak join ' ', @{$rd}{ 'response_code', 'response_message' }
-     if !$err && $rd->{status} eq 'error';
-    croak $resp->status_line;
-  }
-  croak $err if $err;    # Only report errors parsing JSON we have a 200
+  croak $resp->status_line if $resp->is_error;
+  croak $err
+   if $err;    # Only report errors parsing JSON if we have a 200
+  return $spec->{post}( $rd ) if $spec->{post};
   return $rd;
 }
 
 sub api {
   my ( $self, $service, $action, @args ) = @_;
-  return $self->_api( $service, $action, [], undef, @args );
+  return $self->_api(
+    {
+      service => $service,
+      action  => $action
+    },
+    @args
+  );
 }
 
 sub _make_ua {
   my $self = shift;
   my $ua   = LWP::UserAgent->new;
   $ua->agent( join ' ', __PACKAGE__, $VERSION );
-  #  $ua->add_handler(
-  #    request_send => sub {
-  #      shift->header( Authorization => $self->_auth_header );
-  #    }
-  #  );
   return $ua;
 }
-
-#sub _auth_header {
-#  my $self = shift;
-#  return 'Basic '
-#   . encode_base64( join( ':', $self->userid, $self->publickey ), '' );
-#}
 
 sub _ua {
   my $self = shift;
   return $self->{_ua} ||= $self->_make_ua;
 }
 
-=head2 Procedural Interface
+=head2 Other Methods
 
-The following convenience subroutine may be exported:
+=head3 C<< hash >>
 
-=head3 C<< withings >>
-
-Send a notification. 
-
-  withings(
-    userid  => 'alice',
-    secret    => 'x3122b4c4d3bad5e8d7397f0501b617ce60afe5d',
-    to        => 'hexten',
-    msg       => 'Testing...',
-    label     => 'Test',
-    title     => 'Hoot',
-    uri       => 'http://hexten.net/'
-  );
+Given an email and password compute a hash that may be passed to TODO to
+retrieve a userid, publickey pair for a user.
 
 =cut
 
-sub withings {
-  my %opt = _need( [], undef, @_ );
-  return WWW::Withings->new( map { $_ => delete $opt{$_} }
-     qw( userid secret ) )->send_notification( %opt );
+sub hash {
+  my ( $self, $email, $password ) = @_;
+  my $otp = $self->get_otp;
+  croak "Couldn't get authentication information from withings.com"
+   unless defined $otp;
+  return lc md5_hex join ':', $email, md5_hex( $password ), $otp;
 }
 
 1;
