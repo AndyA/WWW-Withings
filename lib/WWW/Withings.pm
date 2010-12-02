@@ -19,11 +19,11 @@ WWW::Withings - Interface to withings.com notification service
 
 =head1 VERSION
 
-This document describes WWW::Withings version 0.10
+This document describes WWW::Withings version 0.01
 
 =cut
 
-our $VERSION = '0.10';
+our $VERSION = '0.01';
 
 =head1 SYNOPSIS
 
