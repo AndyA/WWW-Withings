@@ -7,15 +7,10 @@ use Carp;
 use JSON;
 use Data::Dumper;
 use LWP::UserAgent;
-use MIME::Base64;
-
-use base qw( Exporter );
-
-our @EXPORT_OK = qw( withings );
 
 =head1 NAME
 
-WWW::Withings - Interface to withings.com notification service
+WWW::Withings - Interface to Withings Wifi bathroom scales
 
 =head1 VERSION
 
@@ -28,62 +23,38 @@ our $VERSION = '0.01';
 =head1 SYNOPSIS
 
   use WWW::Withings;
-  my $withings = WWW::Withings->new( username => 'foo', secret => 'xabc123' );
+  my $withings = WWW::Withings->new( userid => 'foo', publickey => 'xabc123' );
   
-  # Subscribe a user...
-  my $status = $withings->subscribe_user( username => 'bar' );
-  
-  # Send a notification
-  my $status = $withings->send_notification(
-    to    => 'someone',
-    msg   => 'Hello!',
-    label => 'JAPH',
-    title => 'Boo',
-    uri   => 'http://example.com/'
-  );
-
 =head1 DESCRIPTION
-
-Withings (L<http://withings.com/>) is a web based notification service that
-can send push messages to mobile deviceas.
-
-From L<http://withings.com/>:
-
-  What Can I Do With Withings?
-
-  If you are a User, you can subscribe to receive notifications from
-  your favorite services that integrate with Withings. On Notifo's site
-  you can set timers, send yourself messages, set stock alerts, and
-  Google Voice SMS alerts. More built-in services will be released in
-  the near future.
-
-  If you are a Service, you can integrate with Withings's API and start
-  sending mobile notifications to your users within a few hours. No need
-  to spend time or resources developing mobile applications just so you
-  can reach your users!
 
 =cut
 
-use constant API => 'https://api.withings.com/v1';
+#http://wbsapi.withings.net/[service_name]?action=[action_name]&[parameters]
+use constant API => 'http://wbsapi.withings.net';
 
-use accessors::ro qw( username secret last );
+use accessors::ro qw( userid publickey last );
 
 BEGIN {
   my %meth = (
-    subscribe_user => {
-      required => [qw( username )],
+    probe => {
+      required => [qw( userid publickey )],
       optional => [],
+      service  => 'once',
+      action   => 'probe',
     },
-    send_notification => {
-      required => [qw( to msg )],
-      optional => [qw( label title uri )],
+    measure => {
+      required => [qw( userid publickey )],
+      optional => [
+        qw( startdate enddate meastype lastupdate category limit offset )
+      ],
+      service => 'measure',
+      action  => 'getmeas',
     },
   );
+  my @APIARGS = qw( service action required optional );
   for my $m ( keys %meth ) {
     no strict 'refs';
-    *{$m} = sub {
-      shift->_api( $m, @{ $meth{$m} }{ 'required', 'optional' }, @_ );
-    };
+    *{$m} = sub { shift->_api( @{ $meth{$m} }{@APIARGS}, @_ ) };
   }
 }
 
@@ -106,19 +77,19 @@ sub _need {
 =head2 C<< new >>
 
 Create a new C<WWW::Withings> object. In common with all methods exposed
-by the module accepts a number of key => value pairs. The C<username>
-and C<secret> options are mandatory:
+by the module accepts a number of key => value pairs. The C<userid>
+and C<publickey> options are mandatory:
 
   my $withings = WWW::Withings->new(
-    username => 'alice',
-    secret   => 'x3122b4c4d3bad5e8d7397f0501b617ce60afe5d'
+    userid    => 'alice',
+    publickey => 'x3122b4c4d3bad5e8d7397f0501b617ce60afe5d'
   );
 
 =cut
 
 sub new {
   my $class = shift;
-  return bless { _need( [ 'secret', 'username' ], [], @_ ) }, $class;
+  return bless { _need( [ 'publickey', 'userid' ], [], @_ ) }, $class;
 }
 
 =head2 API Calls
@@ -128,42 +99,6 @@ API calls provide access to the Withings API.
 On success they return a reference to a hash containing the response
 from withings.com. On errors an exception will be thrown. In the case of
 an error the response hash can be retrieved by calling C<last>.
-
-=head3 C<< subscribe_user >>
-
-Service providers must call this method when users want to subscribe to
-withings alerts. This method will send a confirmation message to the user
-where they can complete the opt-in process. The service provider will
-not be able to send notifications to the user until this subscribe/opt-
-in process has been completed.
-
-Users sending notifications to themselves with their User account do not
-need to use this method. Since a User account can only send
-notifications to itself, it is already implicitly subscribed. Only
-Service accounts need to use this method to subscribe other users.
-
-  my $resp = $withings->subscribe_user(
-    username => 'hexten'
-  );
-
-=head3 C<< send_notification >>
-
-Once a user has subscribed to withings alerts, service providers can call
-this method to send notifications to specific users. The C<to> and
-C<msg> parameters are required. The C<title> parameter is optional, and
-can be thought of as a description of the type of notification being
-sent (almost like the subject of an email). The C<uri> parameter is used
-to specify what URI (web address, app uri, etc) will be loaded when the
-user opens the notification. If omitted, the default service provider
-URL is used.
-
-  my $resp = $withings->send_notification(
-    to    => 'hexten',
-    msg   => 'Testing...',
-    label => 'Test',
-    title => 'Hoot',
-    uri   => 'http://hexten.net/'
-  );
 
 =head3 C<< api >>
 
@@ -189,10 +124,18 @@ error (which throws an exception).
 =cut
 
 sub _api {
-  my ( $self, $method, $need, $optional, @args ) = @_;
-  my %args = _need( $need, $optional, @args );
+  my ( $self, $service, $action, $need, $optional, @args ) = @_;
+  my %args = (
+    _need(
+      $need, $optional,
+      userid    => $self->userid,
+      publickey => $self->publickey,
+      @args
+    ),
+    action => $action
+  );
   my $resp
-   = $self->_ua->post( join( '/', API, $method ), Content => \%args );
+   = $self->_ua->post( join( '/', API, $service ), Content => \%args );
   my $rd = $self->{last} = eval { JSON->new->decode( $resp->content ) };
   my $err = $@;
   if ( $resp->is_error ) {
@@ -205,27 +148,27 @@ sub _api {
 }
 
 sub api {
-  my ( $self, $method, @args ) = @_;
-  return $self->_api( $method, [], undef, @args );
+  my ( $self, $service, $action, @args ) = @_;
+  return $self->_api( $service, $action, [], undef, @args );
 }
 
 sub _make_ua {
   my $self = shift;
   my $ua   = LWP::UserAgent->new;
   $ua->agent( join ' ', __PACKAGE__, $VERSION );
-  $ua->add_handler(
-    request_send => sub {
-      shift->header( Authorization => $self->_auth_header );
-    }
-  );
+  #  $ua->add_handler(
+  #    request_send => sub {
+  #      shift->header( Authorization => $self->_auth_header );
+  #    }
+  #  );
   return $ua;
 }
 
-sub _auth_header {
-  my $self = shift;
-  return 'Basic '
-   . encode_base64( join( ':', $self->username, $self->secret ), '' );
-}
+#sub _auth_header {
+#  my $self = shift;
+#  return 'Basic '
+#   . encode_base64( join( ':', $self->userid, $self->publickey ), '' );
+#}
 
 sub _ua {
   my $self = shift;
@@ -241,7 +184,7 @@ The following convenience subroutine may be exported:
 Send a notification. 
 
   withings(
-    username  => 'alice',
+    userid  => 'alice',
     secret    => 'x3122b4c4d3bad5e8d7397f0501b617ce60afe5d',
     to        => 'hexten',
     msg       => 'Testing...',
@@ -255,7 +198,7 @@ Send a notification.
 sub withings {
   my %opt = _need( [], undef, @_ );
   return WWW::Withings->new( map { $_ => delete $opt{$_} }
-     qw( username secret ) )->send_notification( %opt );
+     qw( userid secret ) )->send_notification( %opt );
 }
 
 1;

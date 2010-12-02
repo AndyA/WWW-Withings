@@ -33,9 +33,9 @@ sub check_request {
   my $auth = $req->header( 'Authorization' );
   like $auth, qr{^Basic\s+\S+$}, 'auth header';
   my ( $cred ) = $auth =~ m{^Basic\s+(\S+)};    # like tramples on $1
-  my ( $username, $secret ) = split /:/, decode_base64( $cred ), 2;
-  is $username, $not->username, 'username';
-  is $secret,   $not->secret,   'secret';
+  my ( $userid, $publickey ) = split /:/, decode_base64( $cred ), 2;
+  is $userid,    $not->userid,    'userid';
+  is $publickey, $not->publickey, 'publickey';
 }
 
 sub response($) {
@@ -69,16 +69,16 @@ want_error { WWW::Withings->new( 'foo' ) } qr{a number}i,
  'odd number of args';
 want_error {
   WWW::Withings->new(
-    username => 'alice',
-    secret   => '123123',
-    foo      => 1
+    userid    => 'alice',
+    publickey => '123123',
+    foo       => 1
   );
 }
 qr{Illegal}i, 'illegal args';
 
 ok my $not = WWW::Withings->new(
-  username => 'alice',
-  secret   => 's3kr1t'
+  userid    => 'alice',
+  publickey => 's3kr1t'
  ),
  'new';
 
@@ -89,7 +89,7 @@ handle_request {
   my $req = shift;
   check_request( $req, $not );
   is $req->uri, 'https://api.withings.com/v1/subscribe_user', 'uri';
-  is_deeply decode_form( $req->content ), { username => 'bob' },
+  is_deeply decode_form( $req->content ), { userid => 'bob' },
    'content';
   return response {
     status           => 'success',
@@ -98,7 +98,7 @@ handle_request {
   };
 };
 
-is_deeply $not->subscribe_user( username => 'bob' ),
+is_deeply $not->subscribe_user( userid => 'bob' ),
  {
   status           => 'success',
   response_code    => 2201,
