@@ -4,4 +4,4 @@ BEGIN {
   use_ok( 'WWW::Withings' );
 }
 
-diag( "Testing WWW::Withings $WWW::Notifo::VERSION" );
+diag( "Testing WWW::Withings $WWW::Withings::VERSION" );
