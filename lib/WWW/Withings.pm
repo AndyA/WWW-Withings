@@ -24,7 +24,10 @@ our $VERSION = '0.01';
 =head1 SYNOPSIS
 
   use WWW::Withings;
-  my $withings = WWW::Withings->new( userid => 'foo', publickey => 'xabc123' );
+  my $withings = WWW::Withings->new(
+    userid    => '194681',
+    publickey => '544c37c05e445b3b'
+  );
   
 =head1 DESCRIPTION
 

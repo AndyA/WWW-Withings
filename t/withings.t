@@ -3,10 +3,9 @@
 use strict;
 use warnings;
 
-use Test::More tests => 38;
+use Test::More tests => 12;
 use JSON;
-use MIME::Base64;
-use WWW::Withings qw( withings );
+use WWW::Withings;
 
 sub want_error(&$;$) {
   my ( $cb, $re, $msg ) = @_;
@@ -20,22 +19,16 @@ sub want_error(&$;$) {
   my $HR;
 
   sub patch_ua {
-    my $not = shift;
-    $not->_ua->add_handler( request_send => sub { $HR->( @_ ) } );
+    my $wi = shift;
+    $wi->_ua->add_handler( request_send => sub { $HR->( @_ ) } );
   }
 
   sub handle_request(&) { $HR = shift }
 }
 
 sub check_request {
-  my ( $req, $not ) = @_;
+  my ( $req, $wi ) = @_;
   is $req->method, 'POST', 'method is POST';
-  my $auth = $req->header( 'Authorization' );
-  like $auth, qr{^Basic\s+\S+$}, 'auth header';
-  my ( $cred ) = $auth =~ m{^Basic\s+(\S+)};    # like tramples on $1
-  my ( $userid, $publickey ) = split /:/, decode_base64( $cred ), 2;
-  is $userid,    $not->userid,    'userid';
-  is $publickey, $not->publickey, 'publickey';
 }
 
 sub response($) {
@@ -76,39 +69,36 @@ want_error {
 }
 qr{Illegal}i, 'illegal args';
 
-ok my $not = WWW::Withings->new(
-  userid    => 'alice',
-  publickey => 's3kr1t'
+ok my $wi = WWW::Withings->new(
+  userid    => '194681',
+  publickey => '544c37c05e445b3b'
  ),
  'new';
 
-isa_ok $not, 'WWW::Withings';
-patch_ua( $not );
+isa_ok $wi, 'WWW::Withings';
+patch_ua( $wi );
 
 handle_request {
   my $req = shift;
-  check_request( $req, $not );
-  is $req->uri, 'https://api.withings.com/v1/subscribe_user', 'uri';
-  is_deeply decode_form( $req->content ), { userid => 'bob' },
+  check_request( $req, $wi );
+  is $req->uri, 'http://wbsapi.withings.net/once', 'uri';
+  is_deeply decode_form( $req->content ),
+   {
+    userid    => '194681',
+    publickey => '544c37c05e445b3b',
+    action    => 'probe'
+   },
    'content';
-  return response {
-    status           => 'success',
-    response_code    => 2201,
-    response_message => 'OK'
-  };
+  return response { status => 0 };
 };
 
-is_deeply $not->subscribe_user( userid => 'bob' ),
- {
-  status           => 'success',
-  response_code    => 2201,
-  response_message => 'OK'
- },
- 'subscribe_user';
+is_deeply $wi->probe, { status => 0 }, 'probe';
+
+__END__
 
 handle_request {
   my $req = shift;
-  check_request( $req, $not );
+  check_request( $req, $wi );
   is $req->uri, 'https://api.withings.com/v1/send_notification', 'uri';
   is_deeply decode_form( $req->content ),
    {
@@ -126,7 +116,7 @@ handle_request {
   };
 };
 
-is_deeply $not->send_notification(
+is_deeply $wi->send_notification(
   to    => 'hexten',
   msg   => 'Testing...',
   label => 'Test',
@@ -140,7 +130,7 @@ is_deeply $not->send_notification(
  },
  'send_notification';
 
-is_deeply $not->api(
+is_deeply $wi->api(
   'send_notification',
   to    => 'hexten',
   msg   => 'Testing...',
@@ -155,7 +145,7 @@ is_deeply $not->api(
  },
  'send_notification via api';
 
-is_deeply $not->last,
+is_deeply $wi->last,
  {
   status           => 'success',
   response_code    => 2201,
@@ -164,7 +154,7 @@ is_deeply $not->last,
  'last response';
 
 want_error {
-  $not->send_notification(
+  $wi->send_notification(
     to      => 'hexten',
     msg     => 'Testing...',
     label   => 'Test',
@@ -187,7 +177,7 @@ handle_request {
 };
 
 want_error {
-  $not->send_notification(
+  $wi->send_notification(
     to  => 'hexten',
     msg => 'Testing...',
   );
@@ -204,7 +194,7 @@ handle_request {
 };
 
 want_error {
-  $not->send_notification(
+  $wi->send_notification(
     to  => 'hexten',
     msg => 'Testing...',
   );
@@ -219,7 +209,7 @@ handle_request {
 };
 
 want_error {
-  $not->send_notification(
+  $wi->send_notification(
     to  => 'hexten',
     msg => 'Testing...',
   );
