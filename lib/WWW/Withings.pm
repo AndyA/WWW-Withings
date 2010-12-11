@@ -33,7 +33,6 @@ our $VERSION = '0.01';
 
 =cut
 
-#http://wbsapi.withings.net/[service_name]?action=[action_name]&[parameters]
 use constant API => 'http://wbsapi.withings.net';
 
 use accessors::ro qw( userid publickey last );
