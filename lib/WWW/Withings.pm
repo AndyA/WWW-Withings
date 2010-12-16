@@ -31,6 +31,8 @@ our $VERSION = '0.01';
   
 =head1 DESCRIPTION
 
+http://www.withings.com/en/api/bodyscale
+
 =cut
 
 use constant API => 'http://wbsapi.withings.net';
@@ -108,15 +110,21 @@ sub new {
   return bless { _need( [ 'publickey', 'userid' ], [], @_ ) }, $class;
 }
 
-sub _get_user {
-  my ( $self, $email, $password ) = @_;
-  my $rs = $self->api(
-    'account', 'getuserslist',
-    email => $email,
-    hash  => $self->hash( $email, $password )
+=head2 C<< for_user >>
+
+Given an email address and password return a new C<WWW::Withings>
+containing that user's C<userid> and C<publickey>.
+
+  my $withings = WWW::Withings->new(
+    userid    => '194681',
+    publickey => '544c37c05e445b3b'
   );
-  return $rs;
-}
+
+  my $user_withings = $withings->for_user(
+    'foo@example.com', 's3kr1t'
+  );
+
+=cut
 
 sub for_user {
   my ( $self, $email, $password ) = @_;
@@ -126,6 +134,16 @@ sub for_user {
     $class->new( publickey => $_->{publickey}, userid => $_->{id} )
   } @{ $user->{body}{users} || [] };
   return wantarray ? @u : $u[0];
+}
+
+sub _get_user {
+  my ( $self, $email, $password ) = @_;
+  my $rs = $self->api(
+    'account', 'getuserslist',
+    email => $email,
+    hash  => $self->hash( $email, $password )
+  );
+  return $rs;
 }
 
 =head2 API Calls
@@ -138,19 +156,7 @@ an error the response hash can be retrieved by calling C<last>.
 
 =head3 C<< api >>
 
-API entry points other than C<subscribe_user> and C<send_notification>
-(of which there are currently none) can be accessed directly by calling
-C<api>. For example, the above send_notification example can also be
-written as:
-
-  my $resp = $withings->api(
-    'send_notification',
-    to    => 'hexten',
-    msg   => 'Testing...',
-    label => 'Test',
-    title => 'Hoot',
-    uri   => 'http://hexten.net/'
-  );
+Direct access to the API. TODO
 
 =head3 C<< last >>
 
@@ -158,6 +164,25 @@ Get the most recent response (a hash ref). Useful in the case of an HTTP
 error (which throws an exception).
 
 =cut
+
+sub _err {
+  my ( $self, $rc ) = @_;
+  my %err = (
+    0   => 'Operation was successfull',
+    100 => 'The hash is missing, invalid, or '
+     . 'does not match the provided email',
+    247 => 'The userid is either absent or incorrect',
+    250 => 'The userid and publickey provided '
+     . 'do not match, or the user does not share its data',
+    264  => 'The email address provided is either unknown or invalid',
+    286  => 'No such subscription was found',
+    293  => 'The callback URL is either absent or incorrect',
+    294  => 'No such subscription could be deleted',
+    304  => 'The comment is either absent or incorrect',
+    2555 => 'An unknown error occured',
+  );
+  return $err{$rc} || "Unknown error (code $rc)";
+}
 
 sub _api {
   my ( $self, $spec, @args ) = @_;
@@ -205,8 +230,12 @@ sub _ua {
 
 =head3 C<< hash >>
 
-Given an email and password compute a hash that may be passed to TODO to
-retrieve a userid, publickey pair for a user.
+Given an email and password compute a hash that may be used retrieve a
+userid, publickey pair for a user.
+
+Generally it won't be necessary to call this directly. Instead call
+C<for_user> to retrieve a new WWW::Withings given an email address
+and password.
 
 =cut
 
